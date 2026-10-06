@@ -1,0 +1,241 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Chibi TAP</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#2b2d42;font:14px/1.35 ui-monospace,Menlo,Consolas,monospace;color:#0f380f;display:flex;justify-content:center;min-height:100vh;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+#dev{width:100%;max-width:420px;background:#d8d4c0;padding:12px;border-radius:18px 18px 48px 18px;margin:8px;align-self:flex-start}
+#top{display:flex;justify-content:space-between;font-weight:700;font-size:12px;margin-bottom:6px}
+#scr{background:#9bbc0f;border:3px solid #0f380f;border-radius:8px 8px 28px 8px;padding:10px;min-height:440px;overflow:auto}
+body.mono #scr{background:#e8e8e8}
+button{font:inherit;background:#8bac0f;color:#0f380f;border:2px solid #0f380f;border-radius:6px;padding:9px;margin:3px 0;width:100%;touch-action:manipulation;user-select:none}
+body.mono button{background:#ddd}
+button:active,.on{background:#0f380f!important;color:#9bbc0f!important}
+.row{display:flex;gap:6px}.row button{flex:1;width:auto}
+pre{white-space:pre-wrap;margin:6px 0;font:inherit}h3{margin:0 0 6px}p{margin:4px 0}
+input{font:inherit;width:100%;padding:8px;border:2px solid #0f380f;background:#c4d98a;margin:3px 0}
+.meter{position:relative;height:200px;width:60px;margin:8px auto;border:2px solid #0f380f}.meter b{position:absolute;bottom:0;left:0;right:0;background:#0f380f;height:0}.zone{position:absolute;left:0;right:0;background:rgba(255,255,255,.6)}
+.sig{font-size:44px;text-align:center;height:80px;line-height:80px}
+.pad,.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}.pad button{font-size:22px}.grid button{height:60px}
+.g4{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}.g4 button{height:70px;font-size:24px}
+#arena{position:relative;height:240px;border:2px dashed #0f380f;touch-action:none}
+#arena i{position:absolute;width:22px;height:22px;margin:-11px;border:3px solid #0f380f;border-radius:50%}
+textarea{font:inherit;width:100%;height:110px;border:2px solid #0f380f;background:#c4d98a;margin:3px 0}
+small{display:block;margin:4px 0;opacity:.8}#msg{min-height:16px}
+</style></head><body><div id="dev"><div id="top"><span>CHIBI TAP v1.1</span><span id="msg"></span><button onclick="home()" style="width:auto;margin:0;padding:1px 8px">⌂</button></div><div id="scr"></div></div>
+<input type="file" id="cf" accept=".js" hidden><input type="file" id="pf" accept=".json" hidden><input type="file" id="df" accept=".json" hidden><input type="file" id="af" accept="audio/*" hidden><input type="file" id="imf" accept="image/*" hidden><input type="file" id="rf" accept=".js,.jsx,.ts,.tsx,.html,.css,.json,.py,.md,.txt" hidden>
+<script>
+const $=s=>document.querySelector(s),R=$('#scr'),esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const K='chibitap.v1',blank=()=>({profile:{name:'',created:Date.now()},settings:{music:true,sound:true,vibration:false,theme:'chibi',text:14,loop:false},cartridges:{},training:{},media:{},history:[],kv:{}});
+let D;try{D=Object.assign(blank(),JSON.parse(localStorage[K]))}catch(e){D=blank()}
+const save=()=>{try{localStorage[K]=JSON.stringify(D)}catch(e){msg('STORAGE FULL')}};
+const beep=()=>{try{const c=beep.c=beep.c||new AudioContext(),o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);g.gain.value=.05;o.frequency.value=660;o.start();o.stop(c.currentTime+.06)}catch(e){}};
+const msg=m=>{$('#msg').textContent=m;clearTimeout(msg.t);msg.t=setTimeout(()=>$('#msg').textContent='',1800);if(D.settings.sound)beep();if(D.settings.vibration&&navigator.vibrate)navigator.vibrate(15)};
+const dl=(n,t)=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([t]));a.download=n;a.click()};
+const bar=v=>'█'.repeat(Math.round(v/10))+'░'.repeat(10-Math.round(v/10));
+const band=s=>s<40?'BEGINNER':s<65?'TRAINED':s<82?'ADVANCED':'ELITE';
+/* ---- media layer: IndexedDB, behind a tiny API ---- */
+const mdb=()=>new Promise((ok,no)=>{const q=indexedDB.open('chibitap-media',1);q.onupgradeneeded=()=>q.result.createObjectStore('audio',{keyPath:'id'});q.onsuccess=()=>ok(q.result);q.onerror=()=>no(q.error)});
+const mtx=(m,f)=>mdb().then(db=>new Promise((ok,no)=>{const t=db.transaction('audio',m),q=f(t.objectStore('audio'));t.oncomplete=()=>ok(q.result);t.onerror=()=>no(t.error)}));
+const mediaAPI={add:(blob,name)=>{const id='T'+Date.now();return mtx('readwrite',st=>st.put({id,name:name||'track',type:blob.type,blob,created:Date.now()})).then(()=>id)},
+list:()=>mtx('readonly',st=>st.getAll()).then(a=>a.map(x=>({id:x.id,name:x.name,type:x.type,created:x.created}))),
+get:id=>mtx('readonly',st=>st.get(id)).then(x=>x&&x.blob),remove:id=>mtx('readwrite',st=>st.delete(id))};
+(async()=>{const o=D.media||{},ids=Object.keys(o);if(!ids.length)return;try{for(const i of ids)await mediaAPI.add(await(await fetch(o[i].data)).blob(),o[i].name);D.media={};save()}catch(e){}})();
+/* ---- bus / modal / compat ---- */
+const H={},INP=[],MOD={},API=['media','onLaunch','storage','ui','message','input','modal','scouter','emit','on'];
+const bus={on:(e,f)=>(H[e]=H[e]||[]).push(f),emit:(e,d)=>(H[e]||[]).forEach(f=>{try{f(d)}catch(x){console.error(x)}})};
+const modal={register:(t,f)=>MOD[t]=f,get:t=>MOD[t],list:()=>Object.keys(MOD)};
+modal.register('text',v=>({type:'text',value:String(v)}));modal.register('touch',a=>({type:'touch',action:a}));
+modal.register('image',d=>({type:'image',source:'local',data:d}));modal.register('audio',d=>({type:'audio',source:'local',data:d}));
+bus.on('INPUT',x=>{const f=MOD[x.type];if(f){INP.push(f(x.v));if(INP.length>20)INP.shift()}});
+const compat={has:n=>API.includes(n)||n==='screen'};
+/* ---- scouter ---- */
+const ST=['STR','SPD','END','SKL','TRANSFER','CTRL','TAC','ADAPT'];
+function report(o){const s=D.training.scouter=D.training.scouter||{};for(const k in o)if(typeof o[k]=='number')s[k]=Math.round(Math.max(0,Math.min(100,o[k])));save()}
+/* ---- runtime ---- */
+const C={};let TM=[],cur=null,pend=null,PK=null;
+const B=(id,meta,fn)=>C[id]={meta,fn};
+const clr=()=>{TM.forEach(clearTimeout);TM=[]};
+function makeTap(id){const t={L:[],onLaunch:f=>t.L.push(f),
+storage:{get:k=>D.kv[id+':'+k],set:(k,v)=>{D.kv[id+':'+k]=v;save()},remove:k=>{delete D.kv[id+':'+k];save()},clear:()=>{for(const k in D.kv)if(k.startsWith(id+':'))delete D.kv[k];save()},keys:()=>Object.keys(D.kv).filter(k=>k.startsWith(id+':')).map(k=>k.slice(id.length+1))},
+ui:{screen:x=>{R.innerHTML='<pre>'+esc(x)+'</pre><button onclick="home()">RETURN</button>'},html:h=>{R.innerHTML=h},root:R},
+message:msg,media:mediaAPI,emit:bus.emit,on:bus.on,input:{collect:()=>INP.slice()},modal,scouter:{report},compat,
+$:s=>R.querySelector(s),stop:x=>{clearTimeout(x);clearInterval(x);TM=TM.filter(y=>y!==x)},exit:()=>home(),
+every:(f,ms)=>{const x=setInterval(()=>{if(cur===t)try{f()}catch(e){fail(id,e)}},ms);TM.push(x);return x},after:(f,ms)=>{const x=setTimeout(()=>{if(cur===t)try{f()}catch(e){fail(id,e)}},ms);TM.push(x);return x},
+result:(k,s,m,st)=>result(id,k,s,m,st),
+util:{avg:a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:0,sd:a=>{if(a.length<2)return 0;const m=a.reduce((x,y)=>x+y,0)/a.length;return Math.sqrt(a.reduce((x,y)=>x+(y-m)**2,0)/a.length)},clamp:v=>Math.max(0,Math.min(100,v)),bar}};return t}
+function run(id){clr();const t=makeTap(id);cur=t;try{const c=C[id];if(c)c.fn(t);else{let got=null;new Function('TAP_CARTRIDGE','tap',D.cartridges[id].src)((m,f)=>{got=f},t);if(got)got(t)}t.L.forEach(f=>f())}catch(x){fail(id,x)}}
+function fail(id,x){clr();const m=(C[id]||D.cartridges[id]||{}).meta||{name:id};R.innerHTML=`<h3>CARTRIDGE ERROR</h3><p>${esc(m.name)}</p><p>The cartridge could not start.</p><details><summary>VIEW DETAILS</summary><pre>${esc(x&&x.stack||x)}</pre></details><button onclick="home()">RETURN</button>`}
+function result(id,key,score,m,stat){score=Math.round(Math.max(0,Math.min(100,score)));const T=D.training[key]=D.training[key]||{best:0,sessions:[],lastScore:0};T.sessions.push({t:Date.now(),score,m});T.sessions=T.sessions.slice(-20);T.lastScore=score;T.best=Math.max(T.best,score);D.history.push({t:Date.now(),k:key,s:score});D.history=D.history.slice(-100);if(stat)report({[stat]:score});save();
+R.innerHTML=`<h3>${esc(key)} SCORE: ${score}</h3><pre>${Object.entries(m).map(([k,v])=>k+': '+v).join('\n')}\nBAND: ${band(score)}\nBEST: ${T.best}\n${T.sessions.slice(-5).map(s=>s.score).join(' → ')}</pre><small>Game performance only, not a medical or physiological measure.</small><button onclick="run('${id}')">AGAIN</button><button onclick="home()">HOME</button>`}
+const srcOf=i=>'TAP_CARTRIDGE('+JSON.stringify(C[i].meta)+', '+C[i].fn.toString()+');';
+/* ---- screens ---- */
+function home(){clr();cur=null;R.innerHTML=`<h3>CHIBI TAP</h3><button onclick="carts()">CARTRIDGES</button><button onclick="phys()">PHYSICAL</button><button onclick="scout()">SCOUTER-LITE</button><button onclick="port()">PORTABLE</button><button onclick="media()">MEDIA</button><button onclick="rdr()">READER</button><button onclick="data()">DATA</button><button onclick="sets()">SETTINGS</button><div style="text-align:center;font-size:24px;margin-top:10px">● TAP</div>`}
+function carts(){clr();cur=null;const all=[...Object.keys(C).map(i=>[i,C[i].meta,0]),...Object.keys(D.cartridges).map(i=>[i,D.cartridges[i].meta,1])];
+R.innerHTML='<h3>CARTRIDGES</h3>'+all.map(([i,m,u])=>`<div class="row"><button onclick="run('${i}')">${esc(m.name)}</button><button style="flex:0 0 52px" onclick="exp('${i}')">EXP</button>${u?`<button style="flex:0 0 52px" onclick="del('${i}')">DEL</button>`:''}</div>`).join('')+`<button onclick="$('#cf').click()">IMPORT CARTRIDGE</button><button onclick="home()">BACK</button>`}
+function exp(i){dl((C[i]?C[i].meta.name:D.cartridges[i].meta.name).toLowerCase().replace(/\W+/g,'-')+'.js',C[i]?srcOf(i):D.cartridges[i].src)}
+function del(i){if(confirm('Delete this cartridge?')){delete D.cartridges[i];save();carts()}}
+$('#cf').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;const src=await f.text();if(!/TAP_CARTRIDGE|onLaunch/.test(src))return msg('NOT A CARTRIDGE');const g=r=>(src.match(r)||[])[1];
+const meta={name:g(/name\s*:\s*["'`]([^"'`]+)/)||f.name.replace(/\.js$/,''),description:g(/description\s*:\s*["'`]([^"'`]+)/)||'',version:g(/version\s*:\s*["'`]([^"'`]+)/)||'?'};pend={meta,src};
+R.innerHTML=`<h3>CARTRIDGE WARNING</h3><p>This cartridge contains JavaScript. Only install code you trust.</p><pre>${esc(meta.name)}\n${esc(meta.description)}\nv${esc(meta.version)}</pre><button onclick="inst()">INSTALL</button><button onclick="carts()">CANCEL</button>`};
+function inst(){const id=pend.meta.name.toLowerCase().replace(/\W+/g,'-')+'-'+(Date.now()%1e5);D.cartridges[id]=pend;save();msg('INSTALLED');carts()}
+function phys(){clr();cur=null;const g=k=>(D.training[k]||{}).lastScore||0,tr=k=>(((D.training[k]||{sessions:[]}).sessions.slice(-4).map(s=>s.score).join(' → '))||'—'),pi=Math.round(g('STR')*.34+g('SPD')*.33+g('END')*.33);
+R.innerHTML=`<h3>PHYSICAL</h3><button onclick="run('STR')">STR · ${band(g('STR'))}</button><button onclick="run('SPD')">SPD · ${band(g('SPD'))}</button><button onclick="run('END')">END · ${band(g('END'))}</button><pre>PHYSICAL INDEX: ${pi}\nSTABILITY: ${100-(Math.max(g('STR'),g('SPD'),g('END'))-Math.min(g('STR'),g('SPD'),g('END')))}\nFORCE   ${bar(g('STR'))}\nSPEED   ${bar(g('SPD'))}\nSUSTAIN ${bar(g('END'))}\n\nSTR ${tr('STR')}\nSPD ${tr('SPD')}\nEND ${tr('END')}</pre><small>Game index, not a medical or physiological measure.</small><button onclick="home()">BACK</button>`}
+let SM=0;const MODES=['RAW','PERF','SUMMARY'];
+function scout(){clr();cur=null;const s=D.training.scouter||{},v=ST.filter(k=>k in s),ix=v.length?Math.round(v.reduce((a,k)=>a+s[k],0)/v.length):0;let b;
+if(SM==0)b=ST.map(k=>(k+'         ').slice(0,10)+(k in s?s[k]:'--')).join('\n');else if(SM==1)b=ST.map(k=>(k+'         ').slice(0,9)+bar(s[k]||0)+' '+(s[k]||0)).join('\n');
+else{const so=v.slice().sort((a,c)=>s[c]-s[a]);b=v.length?'Strongest: '+so[0]+'\nFocus next: '+so[so.length-1]+'\nTraining band: '+band(ix):'Play some cartridges first.'}
+R.innerHTML=`<h3>SCOUTER-LITE</h3><div class="row">${MODES.map((m,i)=>`<button onclick="SM=${i};scout()"${i==SM?' class="on"':''}>${m}</button>`).join('')}</div><pre>${b}\n\nEXECUTION INDEX\n${ix}</pre><small>GAME PERFORMANCE. Not real-world power or physiology.</small><button onclick="home()">BACK</button>`}
+function port(){R.innerHTML=`<h3>PORTABLE</h3><p>CORE + CARTRIDGES + DATA + CONFIG</p><button onclick="expP()">EXPORT TAP</button><button onclick="$('#pf').click()">IMPORT TAP</button><small>Limitation: audio stays in this browser's IndexedDB and is not in the package yet. ZIP is not built in. The package is one folder-shaped JSON file so ZIP can be added later.</small><button onclick="home()">BACK</button>`}
+function expP(){const cs={};for(const i in C)cs[i]={meta:C[i].meta,src:srcOf(i),builtin:1};for(const i in D.cartridges)cs[i]=D.cartridges[i];dl('chibi-tap-portable.json',JSON.stringify({format:'chibi-tap-portable',version:1,manifest:{app:'Chibi TAP',exported:new Date().toISOString()},cartridges:cs,data:Object.assign({},D,{cartridges:{}})},null,1))}
+$('#pf').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{const p=JSON.parse(await f.text());if(p.format!=='chibi-tap-portable'||!p.data)throw 0;PK=p;
+R.innerHTML=`<h3>IMPORT TAP PACKAGE</h3><pre>Cartridges found: ${Object.keys(p.cartridges||{}).length}\nSaved data found: ${Object.keys(p.data.training||{}).length?'YES':'NO'}\nSettings found: ${p.data.settings?'YES':'NO'}</pre><small>Package cartridges contain JavaScript. Only import packages you trust.</small><button onclick="mergeP(0)">MERGE</button><button onclick="mergeP(1)">REPLACE</button><button onclick="port()">CANCEL</button>`}catch(x){msg('INVALID PACKAGE')}};
+function mergeP(rep){const p=PK,add={};for(const i in p.cartridges||{}){const c=p.cartridges[i];if(!c.builtin&&(rep||!D.cartridges[i]))add[i]={meta:c.meta,src:c.src}}
+if(rep)D=Object.assign(blank(),p.data,{cartridges:add});else{const d=p.data;for(const k of['training','media','kv'])D[k]=Object.assign({},d[k],D[k]);D.history=D.history.concat(d.history||[]).slice(-100);Object.assign(D.cartridges,add)}save();apply();msg('IMPORTED');home()}
+async function media(){clr();cur=null;let ids=[];try{ids=await mediaAPI.list()}catch(e){}
+R.innerHTML='<h3>MEDIA</h3>'+(ids.map(x=>`<div class="row"><button onclick="play('${x.id}')">▶ ${esc(x.name)}</button><button style="flex:0 0 44px" onclick="AU.pause()">❚❚</button><button style="flex:0 0 44px" onclick="rmT('${x.id}')">✕</button></div>`).join('')||'<p>No tracks yet.</p>')+`<label><input type="checkbox" style="width:auto" ${D.settings.loop?'checked':''} onchange="D.settings.loop=this.checked;AU.loop=this.checked;save()"> loop</label><button onclick="$('#af').click()">IMPORT AUDIO</button><hr><input id="ti" placeholder="text input"><div class="row"><button onclick="sendT()">SEND TEXT</button><button onclick="$('#imf').click()">IMAGE</button></div><pre>INPUTS: ${INP.map(x=>x.type).join(', ')||'none'}</pre><button onclick="home()">BACK</button>`}
+const AU=new Audio();
+let AUURL=null;async function play(i){if(!D.settings.music)return msg('MUSIC OFF');try{const b=await mediaAPI.get(i);if(AUURL)URL.revokeObjectURL(AUURL);AUURL=URL.createObjectURL(b);AU.src=AUURL;AU.loop=!!D.settings.loop;await AU.play()}catch(e){msg('CANNOT PLAY')}}
+async function rmT(i){if(confirm('Remove this track?')){await mediaAPI.remove(i);media()}}
+function sendT(){const v=$('#ti').value.trim();if(v)bus.emit('INPUT',{type:'text',v});media()}
+function readF(e,cb){const f=e.target.files[0];e.target.value='';if(!f)return;const r=new FileReader();r.onload=()=>cb(f,r.result);r.readAsDataURL(f)}
+$('#af').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{await mediaAPI.add(f,f.name);bus.emit('INPUT',{type:'audio',v:f.name})}catch(x){msg('MEDIA STORE FAILED')}media()};
+$('#imf').onchange=e=>readF(e,(f,d)=>{bus.emit('INPUT',{type:'image',v:d});msg('IMAGE ADDED');media()});
+function data(){R.innerHTML=`<h3>DATA</h3><pre>${esc(D.history.slice(-8).map(h=>h.k+' '+h.s).join('\n')||'No sessions yet')}</pre><button onclick="expD()">EXPORT DATA</button><button onclick="$('#df').click()">IMPORT DATA</button><button onclick="home()">BACK</button>`}
+const expD=()=>dl('chibi-tap-data.json',JSON.stringify({profile:D.profile,settings:D.settings,training:D.training,history:D.history,kv:D.kv},null,1));
+$('#df').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;try{const p=JSON.parse(await f.text());if(!p||typeof p!='object'||typeof p.training!='object')throw 0;if(confirm('Replace local progress with this file?')){Object.assign(D,{profile:p.profile||D.profile,settings:p.settings||D.settings,training:p.training,history:Array.isArray(p.history)?p.history:[],kv:p.kv||{}});save();apply();msg('IMPORTED');data()}}catch(x){msg('INVALID DATA')}};
+function sets(){const s=D.settings,t=(k,l)=>`<button onclick="s_('${k}')">${l}: ${s[k]?'ON':'OFF'}</button>`;
+R.innerHTML='<h3>SETTINGS</h3>'+t('sound','SOUND')+t('music','MUSIC')+t('vibration','VIBRATION')+`<button onclick="s_('theme')">THEME: ${s.theme}</button><div class="row"><button onclick="s_('-')">A-</button><button onclick="s_('+')">A+</button></div><button onclick="expD()">EXPORT DATA</button><button onclick="$('#df').click()">IMPORT DATA</button><button onclick="dev()">DEV MODE</button><button onclick="if(confirm('Reset TAP? All local data is erased.')){localStorage.removeItem(K);D=blank();apply();home()}">RESET TAP</button><button onclick="home()">BACK</button>`}
+function s_(k){const s=D.settings;if(k=='theme')s.theme=s.theme=='chibi'?'mono':'chibi';else if(k=='+'||k=='-')s.text=Math.max(11,Math.min(20,s.text+(k=='+'?1:-1)));else s[k]=!s[k];save();apply();sets()}
+function apply(){document.body.style.fontSize=D.settings.text+'px';document.body.className=D.settings.theme=='mono'?'mono':''}
+async function dev(){let mc='?';try{mc=(await mediaAPI.list()).length}catch(e){}let ok='OK';try{localStorage.setItem('_t',1);localStorage.removeItem('_t')}catch(e){ok='FAIL'}
+R.innerHTML=`<h3>DEV MODE</h3><pre>TAP CORE: OK\nSTORAGE: ${ok}\nCARTRIDGES: ${Object.keys(C).length+Object.keys(D.cartridges).length}\nMEDIA: ${mc} (IndexedDB)\nMODALITIES: ${modal.list().join(' ')}\nAPI: ${API.map(a=>a+' ✓').join(' ')}\nDATA: ${JSON.stringify(D).length/1024|0}KB</pre><button onclick="sets()">BACK</button>`}
+/* ---- cartridges (each uses only the tap API so it can be exported) ---- */
+B('KORIN',{name:'KORIN',description:'Precision fundamentals (SKL)',version:'1.0',group:'TRAINING'},function(tap){tap.onLaunch(()=>{const U=tap.util,N=10;let i=0,r=[],t0=0,tx,ty;
+tap.ui.html('<h3>KORIN · PRECISION</h3><p>Tap the center of each ring.</p><div id="arena"></div>');const A=tap.$('#arena');
+function nx(){if(i>=N)return fin();tx=10+Math.random()*80;ty=10+Math.random()*80;A.innerHTML='<i style="left:'+tx+'%;top:'+ty+'%"></i>';t0=performance.now()}
+A.onpointerdown=e=>{if(!t0)return;const b=A.getBoundingClientRect(),dx=e.clientX-b.left-tx*b.width/100,dy=e.clientY-b.top-ty*b.height/100;r.push({d:Math.hypot(dx,dy),t:performance.now()-t0});t0=0;i++;A.innerHTML='';tap.emit('INPUT',{type:'touch',v:'PLACE'});tap.after(nx,350)};
+function fin(){const p=U.avg(r.map(x=>U.clamp(100-x.d*3))),rt=U.avg(r.map(x=>x.t)),s=U.clamp(100-(rt-400)/12),c=U.clamp(100-U.sd(r.map(x=>x.d))*3);tap.result('KORIN',p*.6+s*.2+c*.2,{Accuracy:Math.round(p)+'%',Reaction:Math.round(rt)+'ms',Consistency:Math.round(c),Status:'FUNDAMENTALS READY'},'SKL')}
+nx()})});
+B('ROSHI',{name:'MASTER ROSHI',description:'Discipline: hold the beat',version:'1.0',group:'TRAINING'},function(tap){tap.onLaunch(()=>{const U=tap.util,N=24,G=700;let t0=0,hit={},off=[],extra=0;
+tap.ui.html('<h3>ROSHI · DISCIPLINE</h3><p>Tap on every beat. 24 beats, no skipping.</p><div class="sig" id="p">·</div><button id="s">START</button><button id="t">TAP</button>');
+tap.$('#s').onclick=()=>{t0=performance.now()+1000;tap.$('#s').remove();for(let k=0;k<N;k++)tap.after(()=>{const p=tap.$('#p');p.textContent='●';tap.after(()=>{p.textContent='·'},150)},1000+k*G);tap.after(fin,1000+N*G+400)};
+tap.$('#t').onpointerdown=()=>{if(!t0)return;tap.emit('INPUT',{type:'touch',v:'BEAT'});const d=performance.now()-t0,k=Math.round(d/G),o=Math.abs(d-k*G);if(k>=0&&k<N&&o<220&&hit[k]==null){hit[k]=o;off.push(o)}else extra++};
+function fin(){const n=off.length,comp=n/N*100,tm=U.avg(off.map(o=>100-o/3)),co=U.clamp(100-U.sd(off)/2)-extra*2;tap.result('ROSHI',comp*.4+tm*.35+co*.25,{Completion:Math.round(comp)+'%',Timing:Math.round(tm),Consistency:Math.round(co),'Extra taps':extra},'CTRL')}})});
+B('GOHAN',{name:'GRANDPA GOHAN',description:'Situational awareness: spot the change',version:'1.0',group:'TRAINING'},function(tap){tap.onLaunch(()=>{const U=tap.util,N=6;let r=0,res=[],a=[],b=[],t0=0;
+function draw(L,play){tap.ui.html('<h3>GOHAN · OBSERVE</h3><p>Round '+(r+1)+'/'+N+(play?' · tap the NEW cell':' · memorize')+'</p><div class="grid">'+[0,1,2,3,4,5,6,7,8].map(i=>'<button data-i="'+i+'"'+(L.includes(i)?' class="on"':'')+'></button>').join('')+'</div>');
+if(play)tap.ui.root.querySelectorAll('[data-i]').forEach(x=>x.onpointerdown=()=>{const i=+x.dataset.i;res.push({ok:b.includes(i)&&!a.includes(i),t:performance.now()-t0});tap.emit('INPUT',{type:'touch',v:'CELL'+i});r++;r<N?tap.after(round,300):fin()})}
+function round(){a=[];while(a.length<3){const c=Math.random()*9|0;if(!a.includes(c))a.push(c)}draw(a,0);tap.after(()=>draw([],0),1400);
+tap.after(()=>{const ch=a[Math.random()*3|0];let c;do c=Math.random()*9|0;while(a.includes(c));b=a.map(x=>x==ch?c:x);draw(b,1);t0=performance.now()},2000)}
+function fin(){const acc=res.filter(x=>x.ok).length/N*100,sp=U.clamp(100-(U.avg(res.map(x=>x.t))-800)/30);tap.result('GOHAN',acc*.7+sp*.3,{Observation:Math.round(acc)+'%',Speed:Math.round(sp)},'TAC')}
+round()})});
+B('KAI',{name:'KING KAI',description:'Progressive training: levels get harder',version:'1.0',group:'TRAINING'},function(tap){tap.onLaunch(()=>{const U=tap.util;let L=1,ratios=[];
+function lvl(){const need=4+L*2;let c=0,go=0;tap.ui.html('<h3>KAI · LEVEL '+L+'</h3><p>Tap '+need+' times within 3s.</p><button id="g" style="height:120px">TAP</button><pre id="c">0/'+need+'</pre>');
+tap.$('#g').onpointerdown=()=>{if(!go){go=1;tap.after(()=>{ratios.push(Math.min(1,c/need));if(c>=need&&L<8){L++;tap.message('PASS');lvl()}else fin(c>=need)},3000)}c++;tap.$('#c').textContent=c+'/'+need;tap.emit('INPUT',{type:'touch',v:'TAP'})}}
+function fin(w){const p=L-1+(w?1:0);tap.result('KAI',p/8*70+U.avg(ratios)*30,{Difficulty:p+'/8 levels',Consistency:Math.round(U.avg(ratios)*100)},'ADAPT')}
+lvl()})});
+B('TACTICS',{name:'TACTICS',description:'Decision-making: text + touch',version:'1.0',group:'TRAINING'},function(tap){tap.onLaunch(()=>{const Q=[['Enemy ahead, you are low on energy.',['Charge','Retreat and recover','Wait'],1],['Fast route is exposed, slow route is covered.',['Fast route','Slow route','Split up'],0],['Ally is down and a threat is near.',['Ignore','Assist now','Cover, then assist'],2]];let i=0,ok=0;
+function q(){const x=Q[i];tap.ui.html('<h3>TACTICS '+(i+1)+'/'+Q.length+'</h3><p>'+x[0]+'</p><input id="n" placeholder="why? (optional text)">'+x[1].map((o,j)=>'<button data-j="'+j+'">'+o+'</button>').join(''));
+tap.ui.root.querySelectorAll('[data-j]').forEach(b=>b.onclick=()=>{const v=tap.$('#n').value.trim();if(v)tap.emit('INPUT',{type:'text',v});tap.emit('INPUT',{type:'touch',v:'CHOICE'+b.dataset.j});if(+b.dataset.j===x[2])ok++;i++;i<Q.length?q():tap.result('TACTICS',ok/Q.length*100,{'Decision quality':ok+'/'+Q.length,'Notes entered':tap.input.collect().filter(z=>z.type=='text').length},'TAC')})}
+q()})});
+B('STR',{name:'STR',description:'Force test: hold and release in the zone',version:'1.0',group:'PHYSICAL'},function(tap){tap.onLaunch(()=>{const U=tap.util,N=8;let r=0,res=[],m=0,c,w,sp,hold=0,t0=0;
+function round(){c=35+Math.random()*55;w=Math.max(8,26-r*2.5);sp=1.1+r*.25;m=0;
+tap.ui.html('<h3>STR · FORCE TEST</h3><p>Round '+(r+1)+'/'+N+' · zone '+Math.round(w)+'%</p><div class="meter"><i class="zone" style="bottom:'+(c-w/2)+'%;height:'+w+'%"></i><b></b></div><button id="b" style="height:70px">HOLD → RELEASE</button>');
+const f=tap.$('.meter b'),b=tap.$('#b');
+b.onpointerdown=e=>{e.preventDefault();if(hold)return;hold=1;t0=performance.now();const tick=()=>{if(!hold)return;m=Math.min(100,(performance.now()-t0)*sp/16);f.style.height=m+'%';tap.after(tick,16)};tick()};
+const up=()=>{if(!hold)return;hold=0;const e=Math.abs(m-c),hit=e<=w/2;res.push({hit,p:Math.max(0,100-e*3)});tap.emit('INPUT',{type:'touch',v:'RELEASE'});r++;tap.message(hit?'HIT':'MISS');r<N?tap.after(round,600):done()};
+b.onpointerup=up;b.onpointerleave=up;b.onpointercancel=up}
+function done(){const acc=res.filter(x=>x.hit).length/N*100,pr=U.avg(res.map(x=>x.p)),e=U.avg(res.slice(0,4).map(x=>x.p)),l=U.avg(res.slice(4).map(x=>x.p)),dr=e?Math.max(0,(e-l)/e*100):0;
+tap.result('STR',acc*.4+pr*.35+(100-dr)*.25,{'Force Control':Math.round(acc),Precision:Math.round(pr),'Fatigue Stability':Math.round(100-dr),Dropoff:Math.round(dr)+'%'},'STR')}
+round()})});
+B('SPD',{name:'SPD',description:'Flash test: react to the right signal',version:'1.0',group:'PHYSICAL'},function(tap){tap.onLaunch(()=>{const U=tap.util,N=14,Dn=['LEFT','RIGHT','UP','DOWN','CENTER'],A={LEFT:'◀',RIGHT:'▶',UP:'▲',DOWN:'▼',CENTER:'●'};
+let i=0,sig=null,fake=0,t0=0,to=0,st=0,rts=[],good=0,fs=0;
+tap.ui.html('<h3>SPD · FLASH TEST</h3><p>Tap the signal. Never tap ✕.</p><div class="sig">WAIT...</div><div class="pad">'+['','UP','','LEFT','CENTER','RIGHT','','DOWN',''].map(d=>d?'<button data-d="'+d+'">'+A[d]+'</button>':'<span></span>').join('')+'</div>');
+const S=tap.$('.sig');
+function next(){if(i>=N)return fin();st=1;S.textContent='WAIT...';to=tap.after(()=>{fake=i>4&&Math.random()<.25?1:0;sig=fake?'X':Dn[Math.random()*5|0];S.textContent=fake?'✕':A[sig];t0=performance.now();st=2;to=tap.after(()=>{if(fake)good++;st=0;i++;next()},fake?900:Math.max(600,1400-i*60))},600+Math.random()*1400)}
+tap.ui.root.querySelectorAll('[data-d]').forEach(b=>b.onpointerdown=()=>{const d=b.dataset.d;tap.emit('INPUT',{type:'touch',v:d});
+if(st==1){st=0;fs++;tap.stop(to);S.textContent='FALSE START';tap.after(next,800)}
+else if(st==2){st=0;tap.stop(to);if(fake)S.textContent='FAKE!';else{const rt=performance.now()-t0;if(d===sig){good++;rts.push(rt);S.textContent=Math.round(rt)+'ms'}else S.textContent='WRONG'}i++;tap.after(next,500)}});
+function fin(){const acc=good/N*100,rt=U.avg(rts),sp=rts.length?U.clamp(100-(rt-250)/5):0,co=U.clamp(100-U.sd(rts)/3);tap.result('SPD',U.clamp(sp*.35+acc*.45+co*.2-fs*3),{Reaction:Math.round(sp)+' ('+Math.round(rt)+'ms)',Accuracy:Math.round(acc),Consistency:Math.round(co),'False Starts':fs},'SPD')}
+next()})});
+B('END',{name:'END',description:'Stay alive: sustained pattern recall',version:'1.0',group:'PHYSICAL'},function(tap){tap.onLaunch(()=>{const U=tap.util;
+tap.ui.html('<h3>END · STAY ALIVE</h3><p>Pick a duration. Patterns grow, windows shrink. 6 errors ends the run.</p><div class="row">'+[1,3,5,10].map(m=>'<button data-m="'+m+'">'+m+' MIN</button>').join('')+'</div>');
+tap.ui.root.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>go(+b.dataset.m));
+function go(min){const T=min*6e4,t0=performance.now(),step=min<3?3:min<10?4:5;let k=0,err=0,res=[],seq=[],pos=0,inp=0;
+function round(){const el=performance.now()-t0;if(el>=T||err>=6)return fin(el);const len=Math.min(8,2+Math.floor(k/step));seq=Array.from({length:len},()=>Math.random()*4|0);pos=0;inp=0;
+tap.ui.html('<h3>ROUND '+(k+1)+'</h3><p>'+Math.floor(el/1000)+'s / '+min*60+'s · errors '+err+'/6</p><div class="g4">'+[0,1,2,3].map(i=>'<button data-i="'+i+'">●</button>').join('')+'</div><p id="st">WATCH</p>');
+const bs=tap.ui.root.querySelectorAll('[data-i]');
+seq.forEach((s,j)=>{tap.after(()=>bs[s].classList.add('on'),500+j*600);tap.after(()=>bs[s].classList.remove('on'),880+j*600)});
+tap.after(()=>{inp=1;tap.$('#st').textContent='GO'},500+len*600);
+tap.after(()=>{if(inp){inp=0;err++;res.push(0);k++;round()}},500+len*600+Math.max(1200,len*800-k*25));
+bs.forEach(b=>b.onpointerdown=()=>{if(!inp)return;const i=+b.dataset.i;tap.emit('INPUT',{type:'touch',v:'PAD'+i});if(i===seq[pos]){pos++;if(pos===len){inp=0;res.push(1);k++;tap.after(round,350)}}else{inp=0;err++;res.push(0);k++;tap.message('MISS');tap.after(round,700)}})}
+function fin(el){const h=Math.floor(res.length/2),e=U.avg(res.slice(0,h)),l=U.avg(res.slice(h)),dr=e?Math.max(0,(e-l)/e*100):0,acc=U.avg(res)*100,dur=Math.min(100,el/T*100),s=Math.round(el/1000);
+tap.result('END',dur*.4+acc*.3+(100-dr)*.3,{Duration:Math.floor(s/60)+':'+String(s%60).padStart(2,'0'),Consistency:Math.round(100-dr),Dropoff:Math.round(dr)+'%',Errors:err,Rounds:res.length},'END')}
+round()}})});
+B('NERVE',{name:'SKL TRANSFER · NERVE',description:'Rule to action: learn, switch, correct',version:'1.0',group:'SKILL'},function(tap){tap.onLaunch(()=>{const U=tap.util,AC=['TAP','HOLD','LEFT','RIGHT'],N=[6,8,8,6];let SY=['●','▲','■','◆'];
+let map=AC.slice().sort(()=>Math.random()-.5),old=map.slice(),ph=0,n=0,st=0,sw2=0,to=0,t0=0,t1=0,cur,T=[],pd=0;
+const mapTxt=()=>SY.map((s,i)=>s+' = '+map[i]).join('\n');
+function swap(){old=map.slice();const a=Math.random()*4|0;let b;do b=Math.random()*4|0;while(b==a);[map[a],map[b]]=[map[b],map[a]]}
+function intro(h){tap.ui.html('<h3>'+h+'</h3><pre>'+mapTxt()+'</pre><p>Memorize it. The map hides when you start.</p><button id="s">START</button>');tap.$('#s').onclick=show}
+function next(){if(n>=N[ph]){ph++;n=0;if(ph>3)return fin();if(ph==1){swap();return intro('RULES CHANGED')}if(ph==3){SY=['★','✚','◐','▮'];map=AC.slice().sort(()=>Math.random()-.5);old=map.slice();return intro('NEW SYMBOLS, NEW LAYOUT')}}
+if(ph==2&&n==4&&!sw2){sw2=1;swap();tap.ui.html('<h3>RULE CHANGE!</h3><pre>'+mapTxt()+'</pre>');return tap.after(show,2400)}show()}
+function fb(t){const e=tap.$('#fb');if(e)e.textContent=t}
+function show(){const s=Math.random()*4|0;cur={s,ok:map[s],o:old[s],ph,f:0,fin:0,i:0,rt:3000};st=1;
+tap.ui.html('<h3>NERVE · P'+(ph+1)+' '+(n+1)+'/'+N[ph]+'</h3><div class="sig">'+SY[s]+'</div><pre id="fb"> </pre><div class="row">'+(ph==3?'<button data-a="RIGHT">RIGHT</button>':'<button data-a="LEFT">LEFT</button>')+'<button id="tp">TAP / HOLD</button>'+(ph==3?'<button data-a="LEFT">LEFT</button>':'<button data-a="RIGHT">RIGHT</button>')+'</div>');
+tap.ui.root.querySelectorAll('[data-a]').forEach(b=>b.onpointerdown=()=>act(b.dataset.a));
+const tp=tap.$('#tp');tp.onpointerdown=()=>{pd=performance.now()};tp.onpointerup=()=>act(performance.now()-pd>350?'HOLD':'TAP');
+t0=performance.now();to=tap.after(()=>{if(st==1){fb('TOO SLOW');end()}},3000)}
+function act(a){tap.emit('INPUT',{type:'touch',v:a});if(st==1){tap.stop(to);cur.rt=performance.now()-t0;cur.f=a==cur.ok?1:0;cur.i=(!cur.f&&a==cur.o)?1:0;
+if(cur.f){cur.fin=1;fb('✓ '+Math.round(cur.rt)+'ms');end()}else{st=2;t1=performance.now();fb('✗ CORRECT IT');to=tap.after(()=>{if(st==2){end()}},1500)}}
+else if(st==2){tap.stop(to);cur.fin=a==cur.ok?1:0;cur.ct=performance.now()-t1;fb(cur.fin?'↺ CORRECTED':'✗');end()}}
+function end(){st=0;T.push(cur);n++;tap.after(next,650)}
+function fin(){const P=x=>x.length?x.filter(y=>y).length/x.length*100:0,f1=P(T.map(t=>t.f)),far=P(T.filter(t=>t.ph==3).map(t=>t.f)),fa=P(T.map(t=>t.fin)),a12=P(T.filter(t=>t.ph>0).map(t=>t.f)),inter=T.filter(t=>t.i).length,
+errs=T.filter(t=>!t.f),cts=errs.filter(t=>t.ct).map(t=>t.ct),cs=cts.length?U.clamp(100-U.avg(cts)/15):(errs.length?0:100),rts=T.filter(t=>t.f).map(t=>t.rt),co=U.clamp(100-U.sd(rts)/6),ad=U.clamp(a12-inter*4),inp=U.clamp(100-(U.avg(rts)-300)/10),
+tr=f1*.3+ad*.2+fa*.2+cs*.15+co*.15,d=f1>=80?'HIGH-TRANSFER':ad>=75?'ADAPTIVE':fa>=85?'PRECISE':'STABLE',L=(k,v)=>Math.round(v)+' '+bar(v);
+tap.result('NERVE',tr,{'NERVE PROFILE':d,Input:L('',inp),Transfer:L('',f1),'Far transfer':L('',far),Execution:L('',fa),Adaptation:L('',ad),Correction:L('',cs),Consistency:L('',co),'Old-rule slips':inter,'TRANSFER INDEX':Math.round(tr)},'TRANSFER')}
+intro('TRANSFER MAP')})});
+/* ---- code reader (local only) ---- */
+let RC={name:''};
+const TAPOK=/^(onLaunch|storage\.(get|set|remove|clear|keys)|ui\.(screen|html)|ui\.root\.\w+|message|input\.collect|modal\.(register|get|list)|scouter\.report|emit|on|media\.(add|list|get|remove)|after|every|stop|result|exit|\$|util\.\w+|compat\.has)$/;
+function rdr(){clr();cur=null;R.innerHTML=`<h3>CODE READER</h3><textarea id="rt" placeholder="paste code or a cartridge, or load a file"></textarea><button onclick="$('#rf').click()">LOAD FILE</button><div class="row"><button onclick="rd('READ')">READ</button><button onclick="rd('SCAN')">SCAN</button><button onclick="rd('ADAPT')">ADAPT</button></div><pre id="ro">Local only. Code is analysed as text, never run.</pre><div id="ra"></div><button onclick="home()">BACK</button>`}
+$('#rf').onchange=async e=>{const f=e.target.files[0];e.target.value='';if(!f)return;RC={name:f.name};$('#rt').value=await f.text()};
+function rd(m){const src=$('#rt').value;if(!src.trim())return msg('NO CODE');const nm=RC.name||'pasted.js',ext=nm.split('.').pop().toLowerCase();
+const lang={js:'JavaScript',jsx:'JSX',ts:'TypeScript',tsx:'TSX',py:'Python',html:'HTML',css:'CSS',json:'JSON',md:'Markdown',txt:'Text'}[ext]||'JavaScript',cs=stripC(src),all=n=>[...cs.matchAll(n)].map(x=>x[1]),u=a=>[...new Set(a)],J=a=>a.length?a.join(', '):'none';
+const isC=/TAP_CARTRIDGE\s*\(/.test(cs),isL=!isC&&/\btap\.onLaunch/.test(cs),apis=u(all(/\btap\.([\w.$]+?)\s*\(/g)),bad=apis.filter(a=>!TAPOK.test(a)),
+fns=u(all(/function\s+(\w+)/g).concat(all(/(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>/g))),net=u(all(/\b(fetch|XMLHttpRequest|WebSocket|sendBeacon|EventSource)\b/g)),
+dep=u(all(/(?:src|href)=["'](https?:[^"']+)/g).concat(all(/(?:from|require\()\s*["']([^"']+)/g))),sto=u(all(/\b(localStorage|sessionStorage|indexedDB|document\.cookie)\b/g)),
+dyn=u(all(/\b(eval|new Function)\b/g)),br=u(all(/\b(document|window|alert|prompt|confirm)(?=[.(])/g)),cn=(src.match(/name\s*:\s*["'`]([^"'`]+)/)||[])[1]||nm.replace(/\.\w+$/,'');
+const H=lang=='HTML'||/^\s*<(!doctype|html)/i.test(src),tt=(src.match(/<title>([^<]+)/i)||[])[1];let o='TAP CODE READER · '+m+'\nFile: '+nm+'\nLanguage: '+lang+'\nType: '+(isC?'TAP Cartridge':isL?'Legacy TAP cartridge':'Plain code')+(isC||isL?'\nCartridge: '+cn:'')+'\nLines: '+src.split('\n').length;RC.cn=cn;RC.ins=isC||isL?src:null;RC.out=null;
+if(m=='READ')o+='\nFunctions: '+J(fns.slice(0,12))+'\nImports/deps: '+J(dep)+'\nTAP APIs: '+(apis.length?apis.map(a=>(TAPOK.test(a)?'✓ ':'✗ ')+'tap.'+a+'()').join('\n  '):'none');
+else if(m=='SCAN')o+='\nCHIBI TAP compat: '+(apis.length-bad.length)+'/'+apis.length+' APIs\nUnsupported TAP APIs: '+J(bad.map(a=>'tap.'+a))+'\nNetwork access: '+J(net)+'\nExternal deps: '+J(dep)+'\nStorage: '+J(sto)+'\nDynamic code: '+J(dyn)+'\nBrowser-specific: '+J(br)+'\nVerdict: '+(bad.length||net.length||dep.length||dyn.length?'REVIEW BEFORE INSTALLING':'LOOKS LOCAL-ONLY')+'\n(Static scan only, not a security guarantee.)';
+else if(isC||isL)o+='\nAlready a cartridge. Nothing to adapt.';
+else if(!H&&!/^(JavaScript|JSX)$/.test(lang))o+='\nADAPT supports JavaScript and HTML only.';
+else{const a=adaptSrc(src,H,tt||cn);RC.out=a.out;RC.ins=a.out;RC.cn=tt||cn;
+o+='\nADAPT TEST\n'+(H?'✓ HTML extracted (markup '+a.mk+', style '+a.cs+', script '+a.js+' chars)\n':'✓ JavaScript wrapped\n')+'✓ DOM shim installed (scoped to cartridge)\n✓ Timers converted: '+a.st.timers+'\n✓ Storage calls converted: '+a.st.store+'\n'+(a.st.launch?'✓ Launch handler detected\n':'· No load handler (code runs at launch)\n')+(a.ext.length?'✗ External scripts not loaded: '+J(a.ext)+'\n':'')+(net.length?'✗ Network calls need manual work: '+J(net)+'\n':'')+'\nCHANGES MADE\n'+a.ch.map(x=>'• '+x).join('\n')+'\n\nSANDBOX RUN: running...';
+setTimeout(()=>sbx(a.out).then(t=>{const x=$('#ro');if(x)x.textContent=o.replace('running...','')+t}),0)}
+$('#ro').textContent=o;$('#ra').innerHTML=(RC.ins?'<button onclick="rdInst()">INSTALL AS CARTRIDGE</button>':'')+(RC.out?'<button onclick="dl(\'adapted-cartridge.js\',RC.out)">EXPORT .js</button>':'')}
+const stripC=x=>x.replace(/<!--[\s\S]*?-->/g,'').replace(/\/\*[\s\S]*?\*\//g,'').replace(/(^|[^:\\])\/\/.*$/gm,'$1');
+function adaptSrc(src,isH,cn){let mk='',css='',js=src,ext=[];
+if(isH){const d=new DOMParser().parseFromString(src,'text/html');css=[...d.querySelectorAll('style')].map(x=>x.textContent).join('\n');js=[...d.querySelectorAll('script:not([src])')].map(x=>x.textContent).join('\n;\n');ext=[...d.querySelectorAll('script[src]')].map(x=>x.getAttribute('src'));d.body.querySelectorAll('script').forEach(x=>x.remove());mk=d.body.innerHTML;
+css=css.replace(/(^|})\s*([^{}@]+)\{/g,(m,a,q)=>a+q.split(',').map(x=>'#scr '+x.trim().replace(/^(html|body)$/,'')).join(',')+'{');if(css)mk='<style>'+css+'</style>'+mk}
+const n=re=>(js.match(re)||[]).length,st={timers:n(/\b(setTimeout|setInterval|requestAnimationFrame)\s*\(/g),store:n(/\blocalStorage\b/g),launch:n(/DOMContentLoaded|onload/g)};
+const pre=`const R=tap.ui.root,_g=globalThis,_d=_g.document,ready=[];
+R.innerHTML=${JSON.stringify(mk)};
+R.querySelectorAll('*').forEach(el=>[...el.attributes].filter(a=>/^on/.test(a.name)).forEach(a=>{const c=a.value;el.removeAttribute(a.name);el.addEventListener(a.name.slice(2),function(event){eval(c)})}));
+const setTimeout=(f,ms)=>tap.after(f,ms),setInterval=(f,ms)=>tap.every(f,ms),clearTimeout=tap.stop,clearInterval=tap.stop,requestAnimationFrame=f=>tap.after(()=>f(performance.now()),16),cancelAnimationFrame=tap.stop;
+const localStorage={getItem:k=>{const v=tap.storage.get(k);return v===undefined?null:v},setItem:(k,v)=>tap.storage.set(k,String(v)),removeItem:k=>tap.storage.remove(k),clear:()=>tap.storage.clear(),key:i=>{const k=tap.storage.keys();return i<k.length?k[i]:null},get length(){return tap.storage.keys().length}};
+const document={getElementById:i=>R.querySelector('#'+CSS.escape(i)),querySelector:s=>R.querySelector(s),querySelectorAll:s=>R.querySelectorAll(s),createElement:t=>_d.createElement(t),createTextNode:t=>_d.createTextNode(t),addEventListener:(e,f)=>e=='DOMContentLoaded'?ready.push(f):R.addEventListener(e,f),body:R,head:R,documentElement:R};
+const window=new Proxy(_g,{get:(t,k)=>k=='document'?document:k=='localStorage'?localStorage:k=='setTimeout'?setTimeout:k=='setInterval'?setInterval:k=='clearTimeout'?clearTimeout:k=='clearInterval'?clearInterval:k=='addEventListener'?((e,f)=>e=='load'||e=='DOMContentLoaded'?ready.push(f):_g.addEventListener(e,f)):k=='window'?window:typeof t[k]=='function'?t[k].bind(t):t[k],set:(t,k,v)=>k=='onload'?(ready.push(v),true):Reflect.set(t,k,v)});`;
+const ch=[isH?'HTML body → cartridge screen':'JavaScript → cartridge',css?'Styles scoped to the cartridge screen':'',(mk.match(/\son\w+=/g)||[]).length?'Inline handlers rewired: '+(mk.match(/\son\w+=/g)||[]).length:'',st.timers?'Timers → tap.after / tap.every: '+st.timers:'',st.store?'localStorage → scoped tap.storage: '+st.store:'',st.launch?'Load handlers → launch':''].filter(Boolean);
+return{ch,out:'TAP_CARTRIDGE({name:'+JSON.stringify(cn)+',description:"Adapted by Chibi TAP Code Reader",version:"1.0"},function(tap){\ntap.onLaunch(()=>{\n'+pre+'\n'+js+'\n;ready.forEach(f=>f());\n});\n});\n',st,ext,mk:mk.length,cs:css.length,js:js.length}}
+function sb1(){const S=globalThis.S={err:[],clicks:0,timers:0,st:0,res:[]},R=document.getElementById('scr'),kv=new Map(),L=globalThis.L=[];
+onerror=(m,u,l)=>{S.err.push(m+(l?' (line '+l+')':''));return true};const w=f=>()=>{try{f()}catch(e){S.err.push(String(e))}};
+const tap={onLaunch:f=>L.push(f),storage:{get:k=>kv.get(k),set:(k,v)=>{S.st++;kv.set(k,v)},remove:k=>{S.st++;kv.delete(k)},clear:()=>kv.clear(),keys:()=>[...kv.keys()]},ui:{root:R,html:h=>{R.innerHTML=h},screen:t=>{R.textContent=t}},message(){},emit(){},on(){},input:{collect:()=>[]},modal:{register(){},get(){},list:()=>[]},scouter:{report:o=>S.res.push(o)},media:{add:async()=>0,list:async()=>[],get:async()=>null,remove:async()=>0},compat:{has:()=>true},$:s=>R.querySelector(s),exit(){},after:(f,ms)=>{S.timers++;return setTimeout(w(f),ms)},every:(f,ms)=>{S.timers++;return setInterval(w(f),ms)},stop:x=>clearTimeout(x),result:(k,v)=>S.res.push({[k]:v}),util:{avg:()=>0,sd:()=>0,clamp:v=>v,bar:()=>''}};
+globalThis.TAP_CARTRIDGE=(m,f)=>{try{f(tap)}catch(e){S.err.push(String(e))}}}
+function sb2(){try{L.forEach(f=>f())}catch(e){S.err.push(String(e))}let i=0;const iv=setInterval(()=>{const b=[...document.querySelectorAll('#scr button,#scr [onclick]')];if(b.length&&i<12){try{b[i%b.length].click();S.clicks++}catch(e){S.err.push(String(e))}}if(++i>=12){clearInterval(iv);parent.postMessage({sbx:1,S},'*')}},120)}
+const SBX=code=>`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data:"><div id="scr"></div><script>(${sb1})()<\/script><script>${code.replace(/<\/script/gi,'<\\/script')}<\/script><script>(${sb2})()<\/script>`;
+function sbx(code){return new Promise(ok=>{const f=document.createElement('iframe');f.sandbox='allow-scripts';f.style.cssText='position:absolute;left:-9999px;width:1px;height:1px';let tm;
+const fin=t=>{clearTimeout(tm);removeEventListener('message',h);f.remove();ok(t)};
+const h=e=>{if(e.source!==f.contentWindow||!e.data||!e.data.sbx)return;const S=e.data.S;fin('\n'+(S.err.length?'✗ Runtime errors:\n  '+S.err.slice(0,3).join('\n  '):'✓ Started, no runtime errors')+'\nInteractions: '+S.clicks+' · timers: '+S.timers+' · storage writes: '+S.st+(S.res.length?' · score reports: '+S.res.length:'')+'\n'+(S.err.length?'MANUAL WORK REQUIRED':'READY TO INSTALL'))};
+addEventListener('message',h);tm=setTimeout(()=>fin('\n✗ Sandbox gave no response\nMANUAL WORK REQUIRED'),4000);f.srcdoc=SBX(code);document.body.appendChild(f)})}
+function rdInst(){pend={meta:{name:RC.cn,description:'From Code Reader',version:'?'},src:RC.ins};const m=pend.meta;R.innerHTML=`<h3>CARTRIDGE WARNING</h3><p>This cartridge contains JavaScript. Only install code you trust.</p><pre>${esc(m.name)}</pre><button onclick="inst()">INSTALL</button><button onclick="rdr()">CANCEL</button>`}
+/* ---- boot ---- */
+apply();R.innerHTML=`<h3 style="font-size:26px">CHIBI TAP</h3><p>TINY CORE.<br>BIG POTENTIAL.</p><button onclick="home()">START</button>`;
+</script></body></html>
